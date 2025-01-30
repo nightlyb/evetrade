@@ -21,15 +21,12 @@ pub fn get_gatecamp_url(path: Vec<String>, flag: &str) -> String {
         return "".to_string(); // Invalid path
     }
 
-    let mut url = format!("{}{}", GATECAMP_URL, path[0]);
+    let mut url = format!("{}{}:{}", GATECAMP_URL, path[0], path[path.len() - 1]);
 
-    for system in &path[1..path.len() - 1] {
-        url.push(':');
+    for system in &path[2..path.len() - 1] {
+        url.push(',');
         url.push_str(&system.to_string());
     }
-
-    url.push(',');
-    url.push_str(&path[path.len() - 1].to_string());
 
     url.push(':');
     url.push_str(flag);

@@ -1,4 +1,5 @@
 use log::error;
+use num_traits::{Signed, ToPrimitive};
 use std::fmt::Write;
 
 use crate::types::{Order, System, Waypoint};
@@ -23,6 +24,31 @@ impl Route {
             jumps: 0,
             profit_per_jump: 0.0,
         }
+    }
+
+    pub fn from_path(path: Vec<Waypoint>) -> Self {
+        let mut route = Route {
+            path: path,
+            profit: 0.0,
+            is_dirty: true,
+            representation: String::new(),
+            jumps: 0,
+            profit_per_jump: 0.0,
+        };
+
+        route.jumps = route
+            .path
+            .iter()
+            .filter(|point| {
+                if let Waypoint::System(_) = point {
+                    true
+                } else {
+                    false
+                }
+            })
+            .count();
+
+        route
     }
 
     pub fn add_systems(&mut self, systems: Vec<System>) {
@@ -53,9 +79,9 @@ impl Route {
         for point in &self.path {
             if let Waypoint::Order(order) = point {
                 if order.is_buy_order {
-                    buy_total += order.price * order.volume;
+                    sell_total += order.price * order.volume as f32; // If order is a buy order, we are selling
                 } else {
-                    sell_total += order.price * order.volume;
+                    buy_total += order.price * order.volume as f32;
                 }
             }
         }
@@ -99,6 +125,37 @@ impl Route {
         });
     }
 
+    fn format_number<T>(val: T) -> String
+    where
+        T: Signed + std::fmt::Display + ToPrimitive + std::cmp::PartialOrd,
+    {
+        // Convert the value to an integer (if it's a float, it will be truncated)
+        let int_val = val.to_i64().expect("Failed to convert value to i64");
+        let abs_val = int_val.abs();
+        let abs_str = abs_val.to_string();
+        let len = abs_str.len();
+
+        // Split the string into chunks of 3 digits from the end
+        let mut chunks = Vec::new();
+        let mut start = len;
+        while start > 0 {
+            let end = start;
+            start = if start >= 3 { start - 3 } else { 0 };
+            chunks.push(&abs_str[start..end]);
+        }
+
+        // Reverse the chunks to get the correct order
+        chunks.reverse();
+
+        let num = chunks.join(",");
+
+        if int_val < 0 {
+            format!("-{}", num)
+        } else {
+            num
+        }
+    }
+
     pub fn represent(&mut self) -> String {
         if !self.is_dirty {
             return self.representation.clone();
@@ -112,12 +169,14 @@ impl Route {
         let mut systems = Vec::new();
         let mut jumps = 1;
 
+        writeln!(representation, "----------------------------------------\n").unwrap();
+
         for point in &self.path {
             match point {
                 Waypoint::System(system) => {
                     writeln!(
                         representation,
-                        "\t{}. {} ({:.2}) ->",
+                        "\t{:0>#3}. {:<20} ({:>4.1}) ->",
                         jumps, system.name, system.security_status
                     )
                     .unwrap();
@@ -129,16 +188,16 @@ impl Route {
                     let order_type = if order.is_buy_order { "Buy" } else { "Sell" };
                     writeln!(
                         representation,
-                        "\n\t{} order for {} of {} ({:.2} ISK).\n",
+                        "\n\n\t{} order for {} of {} ({} ISK).",
                         order_type,
                         order.volume,
                         order.order_type.name,
-                        order.volume * order.price
+                        Route::format_number(order.volume as f32 * order.price)
                     )
                     .unwrap();
                     writeln!(
                         representation,
-                        "\n\tEve Market Browser: {}\n\n",
+                        "\tEve Market Browser: {}\n\n",
                         crate::urls::get_market_browser_url(order.order_type.type_id)
                     )
                     .unwrap();
@@ -153,14 +212,22 @@ impl Route {
         )
         .unwrap();
         writeln!(representation, "Total jumps: {}\n", self.jumps).unwrap();
-        writeln!(representation, "Total profit: {:.2}\n", self.get_profit()).unwrap();
         writeln!(
             representation,
-            "Profit per jump: {:.2}\n",
-            self.get_profit_per_jump()
+            "Total profit: {}\n",
+            Route::format_number(self.get_profit())
         )
         .unwrap();
-        writeln!(representation, "\n\n\n\n").unwrap();
+        writeln!(
+            representation,
+            "Profit per jump: {}\n",
+            Route::format_number(self.get_profit_per_jump())
+        )
+        .unwrap();
+
+        writeln!(representation, "----------------------------------------\n").unwrap();
+
+        writeln!(representation, "\n\n\n").unwrap();
 
         self.representation = representation.clone();
         self.is_dirty = false;

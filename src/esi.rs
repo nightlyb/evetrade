@@ -9,9 +9,12 @@ use std::io::{Read, Write};
 use tar::Archive;
 use xz2::read::XzDecoder;
 
-use crate::settings::SETTINGS;
+use crate::settings::Settings;
 use crate::types::{Order, OrderGroup, Stargate, System, Type, Vector3};
 use crate::urls;
+
+// astronomical units to meters
+const AU: i128 = 149_597_870_700;
 
 // {
 //         let mut settings = SETTINGS.lock().unwrap();
@@ -30,7 +33,7 @@ pub struct ESI {
     pub orders: std::collections::HashMap<u32, OrderGroup>,
     pub systems: HashMap<u32, System>,
     pub types: HashMap<u32, Type>,
-    pub mean_jump_distance: f64,
+    //pub mean_jump_distance: f64,
 }
 
 impl ESI {
@@ -39,15 +42,14 @@ impl ESI {
             orders: HashMap::new(),
             systems: HashMap::new(),
             types: HashMap::new(),
-            mean_jump_distance: 0.0,
+            //mean_jump_distance: 0.0,
         }
     }
 
     pub fn get_all_data(&mut self) -> Result<(), ESIError> {
-        let settings = SETTINGS.lock().unwrap();
-        let path_exists = std::path::Path::new(".cache/").exists();
+        let path_exists = std::path::Path::new(".evecache/").exists();
 
-        if !path_exists || settings.get_update_universe_data() {
+        if !path_exists || Settings::get_update_universe_data() {
             info!("Cache directory does not exist or updating universe data was explicitly requested by the user.");
 
             if let Err(err) = self.fetch_universe_data() {
@@ -58,22 +60,22 @@ impl ESI {
             self.fetch_systems()?;
             self.fetch_types()?;
 
-            ESI::save(&self.systems, ".cache/systems.bin")?;
-            ESI::save(&self.types, ".cache/types.bin")?;
+            ESI::save(&self.systems, ".evecache/systems.bin")?;
+            ESI::save(&self.types, ".evecache/types.bin")?;
         } else {
             info!("Using cached systems and types data.");
 
-            self.systems = ESI::load(".cache/systems.bin")?;
-            self.types = ESI::load(".cache/types.bin")?;
+            self.systems = ESI::load(".evecache/systems.bin")?;
+            self.types = ESI::load(".evecache/types.bin")?;
         }
 
-        let orders_path = std::path::Path::new(".cache/orders.bin");
+        let orders_path = std::path::Path::new(".evecache/orders.bin");
         if !orders_path.exists() {
             info!("Cached orders were not found, fetching...");
 
             self.fetch_orders()?;
 
-            ESI::save(&self.orders, ".cache/orders.bin")?;
+            ESI::save(&self.orders, ".evecache/orders.bin")?;
         } else {
             let modified_time = orders_path.metadata().unwrap().modified().unwrap();
             let fifteen_minutes_ago =
@@ -84,33 +86,34 @@ impl ESI {
 
                 self.fetch_orders()?;
 
-                ESI::save(&self.orders, ".cache/orders.bin")?;
+                ESI::save(&self.orders, ".evecache/orders.bin")?;
             } else {
                 info!("Using cached orders data.");
 
-                self.orders = ESI::load(".cache/orders.bin")?;
+                self.orders = ESI::load(".evecache/orders.bin")?;
             }
         }
 
-        self.mean_jump_distance = self.calculate_mean_jump_distance();
+        //self.mean_jump_distance = self.calculate_mean_jump_distance();
 
         Ok(())
     }
 
-    fn calculate_mean_jump_distance(&mut self) -> f64 {
-        let mut total_distance = 0.0;
-        let mut total_jumps = 0;
+    // fn calculate_mean_jump_distance(&mut self) -> i128 {
+    //     let mut total_distance = 0.0;
+    //     let mut total_jumps = 0;
 
-        for system in self.systems.values() {
-            for stargate in &system.stargates {
-                let destination_system = self.systems.get(&stargate.destination).unwrap();
-                total_distance += system.position.distance(&destination_system.position);
-                total_jumps += 1;
-            }
-        }
+    //     for system in self.systems.values() {
+    //         for stargate in &system.stargates {
+    //             let destination_system = self.systems.get(&stargate.destination).unwrap();
+    //             total_distance += system.position.distance(&destination_system.position);
+    //             total_jumps += 1;
+    //         }
+    //     }
 
-        total_distance / total_jumps as f64
-    }
+    //     total_distance / total_jumps as f64;
+    //     0
+    // }
 
     fn fetch_universe_data(&mut self) -> Result<(), ESIError> {
         info!("Updating universe data...");
@@ -133,7 +136,7 @@ impl ESI {
         let mut archive = Archive::new(cursor);
 
         info!("Extracting universe data...");
-        archive.unpack(".cache").map_err(|err| {
+        archive.unpack(".evecache").map_err(|err| {
             error!("Failed to unpack archive! \n\tError: {}", err);
             ESIError::InvalidData
         })?;
@@ -143,7 +146,7 @@ impl ESI {
 
     fn get_stargates() -> Result<HashMap<u32, Vec<u32>>, ESIError> {
         let data = std::fs::read_to_string(
-            ".cache/eve-ref-esi-scrape/data/tranquility/universe/stargates.en-us.yaml",
+            ".evecache/eve-ref-esi-scrape/data/tranquility/universe/stargates.en-us.yaml",
         )
         .map_err(|err| {
             error!("Failed to read stargates data! \n\tError: {}", err);
@@ -157,7 +160,7 @@ impl ESI {
             })?;
 
         let mut stargate_map = HashMap::new();
-        for (key, value) in stargates {
+        for (_, value) in stargates {
             let system_id = value.system_id;
             let destination_system_id = value.destination.system_id;
 
@@ -173,11 +176,11 @@ impl ESI {
     fn fetch_systems(&mut self) -> Result<(), ESIError> {
         let stargates = ESI::get_stargates()?;
         let data = std::fs::read_to_string(
-            ".cache/eve-ref-esi-scrape/data/tranquility/universe/systems.en-us.yaml",
+            ".evecache/eve-ref-esi-scrape/data/tranquility/universe/systems.en-us.yaml",
         )
         .map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                error!("Data not found. Delete '.cache' folder and try again.");
+                error!("Data not found. Delete '.evecache' folder and try again.");
             }
             ESIError::IoError(err)
         })?;
@@ -191,12 +194,12 @@ impl ESI {
         for (key, value) in &systems {
             let system_id = key.parse::<u32>().unwrap();
             let name = &value.name;
-            let security_status = value.security_status as f32;
+            let security_status = ((value.security_status * 10.0).round() / 10.0) as f32;
 
-            let system_position = Vector3 {
-                x: value.position.x as f64,
-                y: value.position.y as f64,
-                z: value.position.z as f64,
+            let system_position = SystemPosition {
+                x: value.position.x,
+                y: value.position.y,
+                z: value.position.z,
             };
 
             let mut system_stargates = Vec::new();
@@ -209,13 +212,11 @@ impl ESI {
 
                     if destination_security == f32::INFINITY {
                         if let Some(dest_system) = systems.get(&stargate_destination.to_string()) {
-                            destination_security = dest_system.security_status as f32;
+                            destination_security = dest_system.security_status;
                         }
                     }
 
-                    let mut weight =
-                        1.0 + ((destination_security - (-1.0)) * (10.0 - 1.0) / (1.0 - (-1.0)));
-                    weight = ((10.0 + 1.0) - weight).ceil();
+                    let weight = (1.0 + destination_security) / 2.0;
 
                     system_stargates.push(Stargate {
                         origin: system_id,
@@ -225,6 +226,16 @@ impl ESI {
                 }
             }
 
+            if system_stargates.is_empty() {
+                continue;
+            }
+
+            let position = Vector3 {
+                x: (system_position.x / AU) as f64,
+                y: (system_position.y / AU) as f64,
+                z: (system_position.z / AU) as f64,
+            };
+
             self.systems.insert(
                 system_id,
                 System {
@@ -232,9 +243,26 @@ impl ESI {
                     name: name.to_string(),
                     security_status,
                     stargates: system_stargates,
-                    position: system_position,
+                    position,
                 },
             );
+        }
+
+        let mut scale = 0.0;
+        let mut min_scale = f64::INFINITY;
+        for system in self.systems.values() {
+            for stargate in &system.stargates {
+                let destination_system = self.systems.get(&stargate.destination).unwrap();
+                let distance = system.position.distance(&destination_system.position);
+                if distance > scale {
+                    scale = distance;
+                }
+                if distance == 0.0 {
+                    println!("distance 0");
+                } else if distance < min_scale {
+                    min_scale = distance;
+                }
+            }
         }
 
         Ok(())
@@ -242,11 +270,11 @@ impl ESI {
 
     fn fetch_types(&mut self) -> Result<(), ESIError> {
         let data = std::fs::read_to_string(
-            ".cache/eve-ref-esi-scrape/data/tranquility/universe/types.en-us.yaml",
+            ".evecache/eve-ref-esi-scrape/data/tranquility/universe/types.en-us.yaml",
         )
         .map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                error!("Data not found. Delete '.cache' folder and try again.");
+                error!("Data not found. Delete '.evecache' folder and try again.");
             }
             ESIError::IoError(err)
         })?;
@@ -296,9 +324,7 @@ impl ESI {
         let mut reader = csv::Reader::from_reader(csv_data);
 
         info!("Parsing order data...");
-        let mut i = 0;
         for result in reader.records() {
-            i += 1;
             let record = result.map_err(|err| {
                 error!("Failed to parse order data! \n\tError: {}", err);
                 ESIError::InvalidData
@@ -317,8 +343,9 @@ impl ESI {
                 station_id: record.get(13).unwrap_or("0").parse().unwrap_or(0),
                 system_id: record.get(8).unwrap_or("0").parse().unwrap_or(0),
                 region_id: record.get(14).unwrap_or("0").parse().unwrap_or(0),
-                volume: record.get(10).unwrap_or("0.0").parse().unwrap_or(0.0),
+                volume: record.get(10).unwrap_or("0.0").parse().unwrap_or(0),
                 order_type: order_type.clone(),
+                type_id,
             };
 
             if order.station_id == 0 {
@@ -330,8 +357,6 @@ impl ESI {
                 .or_insert_with(OrderGroup::new)
                 .add_order(order);
         }
-
-        info!("orders total: {}", i);
 
         Ok(())
     }
@@ -406,8 +431,15 @@ impl From<std::io::Error> for ESIError {
 #[derive(Debug, serde::Deserialize)]
 struct SystemData {
     name: String,
-    security_status: f64,
-    position: Vector3,
+    security_status: f32,
+    position: SystemPosition,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SystemPosition {
+    x: i128,
+    y: i128,
+    z: i128,
 }
 
 #[derive(Debug, serde::Deserialize)]

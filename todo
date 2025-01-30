@@ -1,0 +1,14 @@
+ideas:
+
+use profit/volume so that we can be almost always full of items
+
+!!!
+preprocess pairs. after we choose the initial pais, delete all the distant pairs.
+take the middle point on origin-destination vector.
+delete the distant pairs to that point (we are sure that they're garbage)
+!!!
+
+TODO:
+
+move all '.evecache' string occurences to a variable!
+max_jumps -> u16??

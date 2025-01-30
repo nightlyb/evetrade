@@ -92,9 +92,9 @@ impl Evetrade {
         info!("Computing routes...");
         let mut processor = OrderProcessor::new(
             &mut self.esi.orders,
-            &self.esi.systems,
+            &mut self.esi.systems,
             &self.esi.types,
-            self.esi.mean_jump_distance,
+            //self.esi.mean_jump_distance,
         );
 
         self.routes = processor.compute();

@@ -1,5 +1,7 @@
 mod esi;
 mod evetrade;
+mod kdtree;
+mod pathfinder;
 mod processor;
 mod route;
 mod settings;

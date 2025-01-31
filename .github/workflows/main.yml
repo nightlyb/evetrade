@@ -27,6 +27,9 @@ jobs:
   fixes:
     name: Run Clippy and Fix Formatting
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup default stable

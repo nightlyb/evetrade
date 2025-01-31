@@ -10,7 +10,7 @@ env:
 
 jobs:
   build_and_test:
-    name: Rust project - latest
+    name: Build and Test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -24,15 +24,22 @@ jobs:
       - run: cargo build --verbose
       - run: cargo test --verbose
 
-  latest_deps:
-    name: Latest Dependencies
+  fixes:
+    name: Run Clippy and Fix Formatting
     runs-on: ubuntu-latest
-    continue-on-error: true
-    env:
-      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: allow
     steps:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup default stable
-      - run: cargo update --verbose
-      - run: cargo build --verbose
-      - run: cargo test --verbose
+      - run: rustup component add clippy
+      - run: cargo clippy --fix --allow-dirty --allow-staged
+      - run: cargo fmt
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "(CI) Apply clippy and rustfmt fixes."
+          title: "(CI) Clippy and formatting fixes."
+          body: "This PR applies fixes suggested by `cargo clippy --fix` and `cargo fmt`."
+          branch: "ci/auto-fixes"
+          delete-branch: true
+          labels: "automated,clippy"

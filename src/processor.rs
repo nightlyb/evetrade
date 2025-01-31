@@ -8,7 +8,7 @@ use crate::kdtree::Node3D;
 use crate::pathfinder::Pathfinder;
 use crate::route::Route;
 use crate::settings::Settings;
-use crate::types::{Order, OrderGroup, System, SystemPath, TradePair, TradeState, Type, Vector3};
+use crate::types::{Order, OrderGroup, System, TradePair, TradePath, TradeState, Type, Vector3};
 
 #[derive(Debug)]
 struct PreprocessStats {
@@ -196,7 +196,6 @@ impl<'a> OrderProcessor<'a> {
         sell_order: &Order,
         trade_state: &Option<TradeState>,
     ) -> u32 {
-        // TODO: Modify this to take into account trade state phase and inventory.
         let type_volume = self
             .types
             .get(&type_id)
@@ -224,7 +223,7 @@ impl<'a> OrderProcessor<'a> {
         let profit_goal = 20_000_000.0; // TODO: Add configurable goal.
         state.available_volume > self.cargo_volume * 0.2
             && state.available_isk > profit_goal
-            && state.jumps < (self.max_jumps as f32 * 0.2) as u32 // TODO: Add these thresholds to settings? These values are arbitrary
+            && state.get_jumps() < (self.max_jumps as f32 * 0.2) as u32 // TODO: Add these thresholds to settings? These values are arbitrary
     }
 
     fn should_accept_pair(
@@ -242,7 +241,7 @@ impl<'a> OrderProcessor<'a> {
         }
 
         let jumps_to_sell_order = pathfinder
-            .compute_path(state.current_system, pair.sell_order_system.id)
+            .compute_path(state.path.current_system(), pair.sell_order_system.id)
             .unwrap()
             .len() as u32;
 
@@ -251,19 +250,22 @@ impl<'a> OrderProcessor<'a> {
             .unwrap()
             .len() as u32;
 
-        let jumps_from_buy_order = pathfinder
-            .compute_path(pair.buy_order_system.id, state.destination)
-            .unwrap()
-            .len() as u32;
+        // let jumps_from_buy_order = pathfinder
+        //     .compute_path(pair.buy_order_system.id, state.destination)
+        //     .unwrap()
+        //     .len() as u32;
 
-        if jumps_to_sell_order + jumps_from_buy_order + jumps_in_pair > self.max_jumps {
+        if jumps_to_sell_order + jumps_in_pair // + jumps_from_buy_order
+            > (self.max_jumps as f32 * 1.2) as u32
+        // TODO: Add this threshold too in the settings too? Remove it?
+        {
             return false;
         }
 
         true
     }
 
-    fn construct_pairs(&self, nodes_map: &mut HashMap<u32, Vector3>) -> Vec<TradePair> {
+    fn construct_pairs(&self) -> Vec<TradePair> {
         let mut pairs: Vec<TradePair> = Vec::new();
 
         for (type_id, order_group) in self.orders.iter() {
@@ -282,9 +284,6 @@ impl<'a> OrderProcessor<'a> {
                     let profit = (buy_order.price - sell_order.price) * units as f32;
                     let cargo_volume = self.types.get(&type_id).unwrap().volume * units as f32;
                     let investment = sell_order.price * units as f32;
-
-                    nodes_map.insert(buy_order_system.id, buy_order_system.position.clone());
-                    nodes_map.insert(sell_order_system.id, sell_order_system.position.clone());
 
                     buy_order.volume = units;
                     sell_order.volume = units;
@@ -318,7 +317,6 @@ impl<'a> OrderProcessor<'a> {
         pathfinder: &mut Pathfinder,
     ) -> TradeState {
         let mut initial_state: Option<TradeState> = Option::None;
-        let mut initial_pair: Option<TradePair> = Option::None;
 
         for (i, pair) in pairs.iter().enumerate() {
             if pair.investment > self.initial_capital {
@@ -344,33 +342,21 @@ impl<'a> OrderProcessor<'a> {
             // Ask user if they want to use this pair. We need to add ability for the user to change the initial pair in case they don't like the results.
             // Ask user on startup for origin system_id and then rate initial pair candidates by profit/distance to origin system?
 
-            let profit_per_jump = pair.profit / jumps as f32;
             initial_state = Some(TradeState {
                 available_isk: self.initial_capital - pair.investment,
                 available_volume: self.cargo_volume - pair.cargo_volume,
-                jumps,
-                inventory: HashMap::new(),
                 visited_systems: std::collections::HashSet::new(),
-                current_system: sell_system.id,
-                destination: buy_system.id,
-                path: SystemPath::new(Vec::new()),
-                orders: Vec::new(),
-                profit_per_jump,
+                path: TradePath::new(),
             });
 
-            initial_pair = Some(pairs.remove(i));
-
             if let Some(state) = &mut initial_state {
-                if let Some(pair) = &initial_pair {
-                    state.inventory.insert(pair.buy_order.type_id, pair.units);
-                    state.orders.push(pair.sell_order.clone());
-                    state.orders.push(pair.buy_order.clone());
-                    state.path = SystemPath::new(
-                        pathfinder
-                            .compute_path(state.current_system, state.destination)
-                            .unwrap(),
-                    );
-                }
+                let pair = pairs.remove(i);
+                state
+                    .path
+                    .insert_order(pair.sell_order.clone(), 0, pathfinder);
+                state
+                    .path
+                    .insert_order(pair.buy_order.clone(), 1, pathfinder);
             }
 
             break;
@@ -384,28 +370,21 @@ impl<'a> OrderProcessor<'a> {
         initial_state.unwrap()
     }
 
-    fn process_routes(&mut self) -> Vec<Route> {
-        info!("Starting processing routes...");
-
-        let routes: Vec<Route> = Vec::new();
-        let mut nodes_map: HashMap<u32, Vector3> = std::collections::HashMap::new();
-        let mut pairs = self.construct_pairs(&mut nodes_map);
-
-        let mut nodes = nodes_map
-            .iter()
-            .map(|(id, position)| Node3D::new(position, *id))
-            .collect::<Vec<_>>();
-        let root = Node3D::construct_tree(&mut nodes, 0).unwrap();
-
-        info!("3-D k-d tree is constructed.");
-
-        let mut pathfinder = Pathfinder::new(self.systems, &root);
-        let mut states: BinaryHeap<TradeState> = BinaryHeap::new();
-        let initial_state: TradeState = self.find_initial_state(&mut pairs, &mut pathfinder);
-
-        let sell_order_position = &self.systems[&initial_state.orders[0].system_id].position;
-        let buy_order_position =
-            &self.systems[&initial_state.orders[initial_state.orders.len() - 1].system_id].position;
+    fn preprocess_pairs(&self, pairs: &mut Vec<TradePair>, initial_state: &TradeState) {
+        let sell_order_position = &self.systems[&initial_state
+            .path
+            .get_all_orders()
+            .first()
+            .unwrap()
+            .system_id]
+            .position;
+        let buy_order_position = &self.systems[&initial_state
+            .path
+            .get_all_orders()
+            .last()
+            .unwrap()
+            .system_id]
+            .position;
 
         let vector = buy_order_position - sell_order_position;
         let middle_point = sell_order_position + &(&vector * 0.5);
@@ -418,9 +397,72 @@ impl<'a> OrderProcessor<'a> {
             similarity >= 0.9
         });
         info!("Number of pairs left: {}.", pairs.len());
+    }
 
-        let mut system_pairs: HashMap<u32, Vec<TradePair>> = HashMap::new();
-        for pair in pairs {
+    fn construct_states(
+        &self,
+        state: &TradeState,
+        pair: &TradePair,
+        pathfinder: &mut Pathfinder,
+    ) -> Vec<TradeState> {
+        let mut new_states: Vec<TradeState> = Vec::new();
+
+        new_states.push(state.clone());
+
+        let mut new_state = state.clone();
+
+        new_state.path.insert_order(
+            pair.sell_order.clone(),
+            new_state.path.current_point_index() + 1,
+            pathfinder,
+        );
+
+        new_state.path.insert_order(
+            pair.buy_order.clone(),
+            new_state.path.current_point_index() + 2,
+            pathfinder,
+        );
+
+        new_states.push(new_state);
+
+        // for i in base_path.current_point_index()..base_path.len() {
+        //     let mut new_path = base_path.clone();
+        //     new_path.insert_order(pair.buy_order.clone(), i, pathfinder);
+
+        //     // Create a new TradeState with the updated path
+        //     let new_state = TradeState {
+        //         path: new_path,
+        //         available_isk: state.available_isk - pair.investment,
+        //         available_volume: state.available_volume - pair.cargo_volume,
+        //         jumps: state.jumps + 1,
+        //         visited_systems: state.visited_systems.clone(),
+        //         profit_per_jump: (state.profit_per_jump * state.jumps as f32 + pair.profit)
+        //             / (state.jumps + 1) as f32,
+        //     };
+
+        //     new_states.push(new_state);
+        // }
+
+        new_states
+    }
+
+    fn process_routes(&mut self) -> Vec<Route> {
+        info!("Starting processing routes...");
+
+        let mut routes: Vec<Route> = Vec::new();
+        let mut pairs = self.construct_pairs();
+
+        let mut pathfinder = Pathfinder::new(self.systems);
+        let initial_state: TradeState = self.find_initial_state(&mut pairs, &mut pathfinder);
+        self.preprocess_pairs(&mut pairs, &initial_state);
+
+        let mut states: BinaryHeap<TradeState> = BinaryHeap::new();
+        states.push(initial_state);
+
+        let mut system_pairs: HashMap<u32, Vec<&TradePair>> = HashMap::new();
+        let mut nodes_set: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut nodes: Vec<Node3D> = Vec::new();
+        for pair in &pairs {
             // Here we precompute the paths for all pairs and cache them in the pathfinder.
             let _ = pathfinder.compute_path(pair.sell_order_system.id, pair.buy_order_system.id);
 
@@ -429,7 +471,20 @@ impl<'a> OrderProcessor<'a> {
                 .entry(pair.sell_order_system.id)
                 .or_default()
                 .push(pair);
+
+            // And collect the nodes for the K-D tree.
+            if nodes_set.get(&pair.sell_order_system.id).is_none() {
+                nodes.push(Node3D::new(
+                    &pair.sell_order_system.position,
+                    pair.sell_order_system.id,
+                ));
+
+                nodes_set.insert(pair.sell_order_system.id);
+            }
         }
+
+        let root = Node3D::construct_tree(&mut nodes, 0).unwrap();
+        info!("3-D k-d tree is constructed.");
 
         /*
             итерируюясь по соседям, смотрим ближайшие точки с трейдами. в зависимости от типа купленного продукта,
@@ -454,38 +509,53 @@ impl<'a> OrderProcessor<'a> {
                 сохраняем все эти стейты, в том числе и неизменённые.
         */
         let mut output_states: Vec<TradeState> = Vec::new();
-        while let Some(state) = states.pop() {
+        while let Some(mut state) = states.pop() {
             if !self.continue_search(&state) {
                 output_states.push(state);
-                continue;
+                break; // todo: remove break
             }
 
-            let current_system = self.systems.get(&state.current_system).unwrap();
-            let mut exclude_nodes: Vec<u32> = state.visited_systems.iter().cloned().collect();
+            debug!("asd");
 
+            let current_system = self.systems.get(&state.path.current_system()).unwrap();
+
+            let mut depth = 0;
             while let Some(nearest_node) = Node3D::nearest_neighbor(
-                &Some(root.clone()), // TODO: Fix this. Would it cause a chain of clones? Reference is ideal.
+                &Some(root.clone()),
                 &current_system.position,
-                &exclude_nodes,
+                &state.visited_systems,
             ) {
+                if depth >= 1 {
+                    break;
+                }
+
                 let nearest_system_id = nearest_node.system_id;
+                state.visited_systems.insert(nearest_system_id);
                 let pairs = match system_pairs.get(&nearest_system_id) {
-                    Some(group) => group,
+                    Some(closest_pairs) => closest_pairs,
                     None => {
-                        exclude_nodes.push(nearest_system_id);
                         continue;
                     }
                 };
+
+                for pair in pairs {
+                    if self.should_accept_pair(pair, &state, &mut pathfinder) {
+                        states.extend(self.construct_states(&state, &pair, &mut pathfinder));
+                    }
+                }
+
+                depth += 1;
             }
 
-            let new_state: Option<TradeState> = Option::None;
-
+            state.path.next_system_id();
             states.push(state);
         }
 
-        drop(system_pairs);
-
         debug!("Output states: {:?}", output_states);
+
+        for state in output_states {
+            routes.push(state.to_route(&mut pathfinder));
+        }
 
         routes
     }

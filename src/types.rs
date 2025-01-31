@@ -1,5 +1,7 @@
 use crate::pathfinder::Pathfinder;
 use crate::route::Route;
+use log::debug;
+use serde;
 use std::cmp::Ordering;
 use std::ops::{Add, Mul, Sub};
 
@@ -262,46 +264,91 @@ impl Add for &Vector3 {
 //     Transit,
 // }
 
-#[derive(Debug)]
-pub struct SystemPath {
-    systems: Vec<u32>,
-    current_system: usize,
+#[derive(Debug, Clone)]
+pub struct TradePoint {
+    system_id: u32,
+    order: Option<Order>,
 }
 
-impl SystemPath {
-    pub fn new(systems: Vec<u32>) -> Self {
-        SystemPath {
-            systems,
-            current_system: 0,
+#[derive(Debug, Clone)]
+pub struct TradePath {
+    points: Vec<TradePoint>,
+    current_point: usize,
+}
+
+impl TradePath {
+    pub fn new() -> Self {
+        TradePath {
+            points: Vec::new(),
+            current_point: 0,
+        }
+    }
+
+    pub fn current_point_index(&self) -> usize {
+        self.current_point
+    }
+
+    pub fn insert_order(&mut self, order: Order, index: usize, pathfinder: &mut Pathfinder) {
+        self.points.insert(
+            index,
+            TradePoint {
+                system_id: order.system_id,
+                order: Some(order),
+            },
+        );
+
+        let mut i: usize = 0;
+        while i < self.points.len() - 1 {
+            let order1 = &self.points[i];
+            if let Some(order2) = self.points.get(i + 1) {
+                if order1.system_id == order2.system_id {
+                    i += 1;
+                    continue;
+                }
+
+                let path = pathfinder
+                    .compute_path(order1.system_id, order2.system_id)
+                    .unwrap();
+
+                for &id in &path[1..path.len() - 1] {
+                    self.points.push(TradePoint {
+                        system_id: id,
+                        order: None,
+                    });
+                }
+
+                i += 2;
+            }
         }
     }
 
     pub fn len(&self) -> usize {
-        self.systems.len()
+        self.points.len()
     }
 
-    pub fn current_system(&self) -> Option<u32> {
-        self.systems.get(self.current_system).copied()
+    pub fn destination(&self) -> u32 {
+        self.points.get(self.points.len() - 1).unwrap().system_id
+    }
+
+    pub fn current_system(&self) -> u32 {
+        self.points.get(self.current_point).unwrap().system_id
     }
 
     // Move to the next system and return its ID
     pub fn next_system_id(&mut self) -> Option<u32> {
-        if self.current_system + 1 < self.systems.len() {
-            self.current_system += 1;
-            self.current_system()
+        if self.current_point + 1 < self.points.len() {
+            self.current_point += 1;
+            Some(self.current_system())
         } else {
             None
         }
     }
 
-    pub fn insert_after_current(&mut self, new_system: u32) {
-        let insert_index = self.current_system + 1;
-        self.systems.insert(insert_index, new_system);
-    }
-
-    pub fn extend_after_current(&mut self, new_systems: Vec<u32>) {
-        let insert_index = self.current_system + 1;
-        self.systems.splice(insert_index..insert_index, new_systems);
+    pub fn get_all_orders(&self) -> Vec<Order> {
+        self.points
+            .iter()
+            .filter_map(|point| point.order.clone())
+            .collect()
     }
 }
 
@@ -318,32 +365,39 @@ pub struct TradePair<'a> {
     pub investment: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TradeState {
-    pub current_system: u32,
-    pub destination: u32,
-    pub path: SystemPath,
-    pub inventory: std::collections::HashMap<u32, u32>, // type_id -> amount
+    pub path: TradePath,
     pub available_isk: f32,
     pub available_volume: f32,
-    pub jumps: u32,
-    //pub path: Vec<TradeOpportunity>,
-    pub orders: Vec<Order>,
     pub visited_systems: std::collections::HashSet<u32>,
-    pub profit_per_jump: f32,
 }
 
 impl TradeState {
+    pub fn get_profit_per_jump(&self) -> f32 {
+        self.path
+            .points
+            .iter()
+            .filter_map(|point| point.order.clone())
+            .map(|order| order.price)
+            .sum::<f32>()
+            / self.path.points.len() as f32
+    }
+
+    pub fn get_jumps(&self) -> u32 {
+        self.path.len() as u32
+    }
+
     pub fn to_route(&self, pathfinder: &mut Pathfinder) -> Route {
         // TODO: do we need this at all? review the code later, too tired rn
         let mut path: Vec<Waypoint> = Vec::new();
-        assert_eq!(self.path.len() % 2, 0); // Ensure there is always a pair of buy/sell orders
+        let orders = self.path.get_all_orders();
+        assert_eq!(orders.len() % 2, 0); // Ensure there is always a pair of buy/sell orders
 
-        //let mut iter = self.path.clone().into_iter();
         let mut i: usize = 0;
-        while i < self.path.len() {
-            let sell_order = self.orders[i].clone();
-            let buy_order = self.orders[i + 1].clone();
+        while i < orders.len() {
+            let sell_order = orders[i].clone();
+            let buy_order = orders[i + 1].clone();
             path.push(Waypoint::Order(sell_order.clone()));
             path.extend(
                 pathfinder
@@ -362,7 +416,7 @@ impl TradeState {
 
 impl PartialEq for TradeState {
     fn eq(&self, other: &Self) -> bool {
-        self.profit_per_jump == other.profit_per_jump
+        self.get_profit_per_jump() == other.get_profit_per_jump()
     }
 }
 
@@ -374,8 +428,8 @@ impl PartialOrd for TradeState {
 
 impl Ord for TradeState {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.profit_per_jump
-            .partial_cmp(&other.profit_per_jump)
+        self.get_profit_per_jump()
+            .partial_cmp(&other.get_profit_per_jump())
             .unwrap_or(Ordering::Equal)
             .reverse()
     }

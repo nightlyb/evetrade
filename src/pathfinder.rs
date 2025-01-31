@@ -10,15 +10,13 @@ use crate::types::System;
 
 pub struct Pathfinder<'a> {
     pub systems: &'a HashMap<u32, System>,
-    kd_root: &'a Node3D<'a>,
     path_cache: HashMap<(u32, u32), Vec<u32>>,
 }
 
 impl<'a> Pathfinder<'a> {
-    pub fn new(systems: &'a HashMap<u32, System>, kd_root: &'a Node3D) -> Self {
+    pub fn new(systems: &'a HashMap<u32, System>) -> Self {
         Pathfinder {
             systems,
-            kd_root,
             path_cache: HashMap::new(),
         }
     }
@@ -34,9 +32,9 @@ impl<'a> Pathfinder<'a> {
         }
     }
 
-    fn a_star(&self, origin: u32, destination: u32, security_threshold: f32) -> Vec<u32> {
+    fn a_star(&self, origin: u32, destination: u32, security_threshold: f32) -> Option<Vec<u32>> {
         if !self.systems.contains_key(&origin) || !self.systems.contains_key(&destination) {
-            return Vec::new();
+            return None;
         }
 
         let mut open_set = BinaryHeap::new();
@@ -92,17 +90,17 @@ impl<'a> Pathfinder<'a> {
             }
         }
 
-        Vec::new()
+        None
     }
 
-    fn reconstruct_path(&self, came_from: HashMap<u32, u32>, mut current: u32) -> Vec<u32> {
+    fn reconstruct_path(&self, came_from: HashMap<u32, u32>, mut current: u32) -> Option<Vec<u32>> {
         let mut path = vec![current];
         while let Some(&prev) = came_from.get(&current) {
             path.push(prev);
             current = prev;
         }
         path.reverse();
-        path
+        Some(path)
     }
 
     pub fn compute_path(&mut self, start_id: u32, end_id: u32) -> Option<Vec<u32>> {
@@ -114,7 +112,7 @@ impl<'a> Pathfinder<'a> {
 
         let path = self.a_star(start_id, end_id, -1.0);
 
-        if !path.is_empty() {
+        if let Some(path) = path {
             self.path_cache.insert(cache_key, path.clone());
             Some(path)
         } else {

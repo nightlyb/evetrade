@@ -74,7 +74,7 @@ impl<'a> Node3D<'a> {
     pub fn nearest_neighbor(
         root: &Option<Box<Node3D<'a>>>,
         target: &Vector3,
-        exclude_nodes: &Vec<u32>,
+        exclude_nodes: &std::collections::HashSet<u32>,
     ) -> Option<Node3D<'a>> {
         if root.is_none() {
             return None;

@@ -1,9 +1,5 @@
-use bincode;
 use bzip2::read::BzDecoder;
 use log::{debug, error, info};
-use reqwest;
-use serde;
-use serde_yaml;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use tar::Archive;
@@ -194,7 +190,7 @@ impl ESI {
         for (key, value) in &systems {
             let system_id = key.parse::<u32>().unwrap();
             let name = &value.name;
-            let security_status = ((value.security_status * 10.0).round() / 10.0) as f32;
+            let security_status = (value.security_status * 10.0).round() / 10.0;
 
             let system_position = SystemPosition {
                 x: value.position.x,
@@ -352,10 +348,7 @@ impl ESI {
                 continue;
             }
 
-            self.orders
-                .entry(type_id)
-                .or_insert_with(OrderGroup::new)
-                .add_order(order);
+            self.orders.entry(type_id).or_default().add_order(order);
         }
 
         Ok(())

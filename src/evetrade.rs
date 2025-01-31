@@ -79,7 +79,7 @@ impl Evetrade {
 
         info!("Logger initialized successfully!");
 
-        if let Err(_) = self.esi.get_all_data() {
+        if self.esi.get_all_data().is_err() {
             error!("Failed to fetch all required data! Shutting down...");
             return Err(EvetradeError::ESIError);
         }

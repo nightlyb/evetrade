@@ -1,6 +1,5 @@
 use core::f32;
-use log::{debug, error, info, trace};
-use rand::Rng;
+use log::{debug, info};
 use std::collections::{BinaryHeap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::u32;
@@ -108,10 +107,10 @@ impl<'a> OrderProcessor<'a> {
 
                 order_group
                     .buy
-                    .retain(|order| !self.systems.get(&order.system_id).is_none());
+                    .retain(|order| self.systems.get(&order.system_id).is_some());
                 order_group
                     .sell
-                    .retain(|order| !self.systems.get(&order.system_id).is_none());
+                    .retain(|order| self.systems.get(&order.system_id).is_some());
 
                 // Descending for buy, ascending for sell
                 order_group
@@ -261,7 +260,7 @@ impl<'a> OrderProcessor<'a> {
             return false;
         }
 
-        return true;
+        true
     }
 
     fn construct_pairs(&self, nodes_map: &mut HashMap<u32, Vector3>) -> Vec<TradePair> {
@@ -307,7 +306,7 @@ impl<'a> OrderProcessor<'a> {
         }
 
         pairs.sort_by(|a, b| b.profit.partial_cmp(&a.profit).unwrap());
-        assert!(pairs.iter().nth(0).unwrap().profit > pairs.iter().nth(1).unwrap().profit);
+        assert!(pairs.first().unwrap().profit > pairs.get(1).unwrap().profit);
 
         info!("Pairs are constructed and sorted.");
         pairs
@@ -388,7 +387,7 @@ impl<'a> OrderProcessor<'a> {
     fn process_routes(&mut self) -> Vec<Route> {
         info!("Starting processing routes...");
 
-        let mut routes: Vec<Route> = Vec::new();
+        let routes: Vec<Route> = Vec::new();
         let mut nodes_map: HashMap<u32, Vector3> = std::collections::HashMap::new();
         let mut pairs = self.construct_pairs(&mut nodes_map);
 
@@ -428,7 +427,7 @@ impl<'a> OrderProcessor<'a> {
             // We also cache the pairs for each system.
             system_pairs
                 .entry(pair.sell_order_system.id)
-                .or_insert(Vec::new())
+                .or_default()
                 .push(pair);
         }
 
@@ -479,7 +478,7 @@ impl<'a> OrderProcessor<'a> {
                 };
             }
 
-            let mut new_state: Option<TradeState> = Option::None;
+            let new_state: Option<TradeState> = Option::None;
 
             states.push(state);
         }

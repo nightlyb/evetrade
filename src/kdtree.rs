@@ -97,7 +97,7 @@ impl<'a> Node3D<'a> {
             }
 
             // Compute the distance to the target point.
-            let dist = target.distance_squared(&current_node.position);
+            let dist = target.distance_squared(current_node.position);
 
             // Update the best point if necessary.
             if best_distance == 0.0 || dist < best_distance {

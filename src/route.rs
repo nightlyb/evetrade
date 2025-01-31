@@ -28,7 +28,7 @@ impl Route {
 
     pub fn from_path(path: Vec<Waypoint>) -> Self {
         let mut route = Route {
-            path: path,
+            path,
             profit: 0.0,
             is_dirty: true,
             representation: String::new(),

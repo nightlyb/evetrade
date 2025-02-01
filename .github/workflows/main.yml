@@ -38,6 +38,8 @@ jobs:
           path: |
             target/release/evetrade
             target/release/evetrade.exe
+            README.md
+            config.toml
 
   fixes:
     name: Run Clippy and Fix Formatting

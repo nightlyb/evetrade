@@ -6,11 +6,13 @@ use std::io::Write;
 use crate::esi;
 use crate::processor::OrderProcessor;
 use crate::route::Route;
+use crate::settings::Settings;
 
 #[derive(Debug)]
 pub enum EvetradeError {
     ESIError,
     IOError,
+    ConfigError,
 }
 
 pub struct Evetrade {
@@ -29,6 +31,12 @@ impl Evetrade {
     }
 
     pub fn init(&mut self) -> Result<(), EvetradeError> {
+        println!("initializing logger...");
+        Settings::parse_config().map_err(|err| {
+            println!("Evetrade::init() : error in the config: {}", err);
+            EvetradeError::ConfigError
+        })?;
+
         Builder::new()
             .format(|buf, record| {
                 let now = Local::now();
@@ -74,7 +82,7 @@ impl Evetrade {
                     record.args()
                 )
             })
-            .filter_level(LevelFilter::Debug)
+            .filter_level(Settings::get_log_level())
             .init();
 
         info!("Logger initialized successfully!");
@@ -135,6 +143,7 @@ impl std::fmt::Display for EvetradeError {
         match self {
             EvetradeError::ESIError => write!(f, "Failed to perform API requests!"),
             EvetradeError::IOError => write!(f, "Failed to save routes!"),
+            EvetradeError::ConfigError => write!(f, "Failed to load the configuration file!"),
         }
     }
 }

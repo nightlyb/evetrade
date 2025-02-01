@@ -1,0 +1,14 @@
+[settings]
+log_level = "Debug"          # Trace, Debug, Error, Warn, Info
+cache_dir = ".evecache"      # Directory to store universe and order data
+update_universe_data = false # Should the universe data be updated
+
+[thresholds]
+percentage_threshold = 10.0    # Percentage threshold for the price difference between two orders
+price_threshold = 10_000_000.0 # Price threshold for the price difference between two orders
+max_jumps = 100                # Maximum number of jumps to consider for the route
+security_threshold = -1.0      # Security threshold for the route
+
+[user]
+ship_cargo_volume = 6_300.0    # Your ship's cargo volume
+initial_capital = 50_000_000.0 # Your initial capital

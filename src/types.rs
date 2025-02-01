@@ -37,6 +37,7 @@ pub struct Order {
     pub system_id: u32,
     pub region_id: u32,
     pub volume: u32,
+    pub cargo_volume: f32,
     pub type_id: u32,
 }
 
@@ -327,7 +328,7 @@ impl TradePath {
     }
 
     pub fn destination(&self) -> u32 {
-        self.points.get(self.points.len() - 1).unwrap().system_id
+        self.points.last().unwrap().system_id
     }
 
     pub fn current_system(&self) -> u32 {
@@ -359,7 +360,6 @@ pub struct TradePair<'a> {
     pub buy_order_system: &'a System,
     pub sell_order_system: &'a System,
 
-    pub units: u32,
     pub cargo_volume: f32,
     pub profit: f32,
     pub investment: f32,
@@ -368,20 +368,47 @@ pub struct TradePair<'a> {
 #[derive(Debug, Clone)]
 pub struct TradeState {
     pub path: TradePath,
-    pub available_isk: f32,
-    pub available_volume: f32,
+    pub initial_capital: f32,
+    pub initial_volume: f32,
     pub visited_systems: std::collections::HashSet<u32>,
 }
 
 impl TradeState {
-    pub fn get_profit_per_jump(&self) -> f32 {
+    pub fn get_occupied_volume(&self) -> f32 {
+        let mut occupied_volume = 0.0;
+
+        for point in &self.path.points[0..self.path.current_point_index() + 1] {
+            if let Some(order) = &point.order {
+                occupied_volume += if order.is_buy_order {
+                    -order.cargo_volume
+                } else {
+                    order.cargo_volume
+                };
+            }
+        }
+
+        occupied_volume
+    }
+
+    pub fn get_available_volume(&self) -> f32 {
+        self.initial_volume - self.get_occupied_volume()
+    }
+
+    pub fn get_available_isk(&self) -> f32 {
+        self.initial_capital + self.get_profit()
+    }
+
+    pub fn get_profit(&self) -> f32 {
         self.path
             .points
             .iter()
             .filter_map(|point| point.order.clone())
-            .map(|order| order.price)
+            .map(|order| if order.is_buy_order { order.price } else { 0.0 })
             .sum::<f32>()
-            / self.path.points.len() as f32
+    }
+
+    pub fn get_profit_per_jump(&self) -> f32 {
+        self.get_profit() / self.path.points.len() as f32
     }
 
     pub fn get_jumps(&self) -> u32 {

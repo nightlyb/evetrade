@@ -341,6 +341,8 @@ impl ESI {
                 region_id: record.get(14).unwrap_or("0").parse().unwrap_or(0),
                 volume: record.get(10).unwrap_or("0.0").parse().unwrap_or(0),
                 order_type: order_type.clone(),
+                cargo_volume: record.get(10).unwrap_or("0.0").parse().unwrap_or(0.0)
+                    * order_type.volume,
                 type_id,
             };
 

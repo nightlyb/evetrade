@@ -2,7 +2,10 @@ use log::error;
 use num_traits::{Signed, ToPrimitive};
 use std::fmt::Write;
 
-use crate::types::{Order, System, Waypoint};
+use crate::{
+    settings::Settings,
+    types::{Order, System, Waypoint},
+};
 
 #[derive(Clone)]
 pub struct Route {
@@ -188,11 +191,15 @@ impl Route {
                     let order_type = if order.is_buy_order { "Buy" } else { "Sell" };
                     writeln!(
                         representation,
-                        "\n\n\t{} order for {} of {} ({} ISK).",
+                        "\n\n\t{} order for {} of {} ({} ISK; {} units; {}% cargo).",
                         order_type,
                         order.volume,
                         order.order_type.name,
-                        Route::format_number(order.volume as f32 * order.price)
+                        Route::format_number(order.volume as f32 * order.price),
+                        order.volume,
+                        ((Settings::get_ship_cargo_volume() / order.volume as f32) * 100.0 * 10.0)
+                            .round()
+                            / 10.0
                     )
                     .unwrap();
                     writeln!(

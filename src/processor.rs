@@ -8,7 +8,7 @@ use crate::kdtree::Node3D;
 use crate::pathfinder::Pathfinder;
 use crate::route::Route;
 use crate::settings::Settings;
-use crate::types::{Order, OrderGroup, System, TradePair, TradePath, TradeState, Type, Vector3};
+use crate::types::{Order, OrderGroup, System, TradePair, TradePath, TradeState, Type};
 
 #[derive(Debug)]
 struct PreprocessStats {
@@ -194,7 +194,7 @@ impl<'a> OrderProcessor<'a> {
         type_id: u32,
         buy_order: &Order,
         sell_order: &Order,
-        trade_state: &Option<TradeState>,
+        trade_state: &Option<&TradeState>,
     ) -> u32 {
         let type_volume = self
             .types
@@ -207,8 +207,8 @@ impl<'a> OrderProcessor<'a> {
 
         if let Some(state) = trade_state {
             state_limit = state_limit
-                .min((state.available_isk / sell_order.price) as u32)
-                .min((state.available_volume / type_volume) as u32);
+                .min((state.get_available_isk() / sell_order.price) as u32)
+                .min((state.get_available_volume() / type_volume) as u32);
         }
 
         volume_limit
@@ -221,9 +221,12 @@ impl<'a> OrderProcessor<'a> {
 
     fn continue_search(&self, state: &TradeState) -> bool {
         let profit_goal = 20_000_000.0; // TODO: Add configurable goal.
-        state.available_volume > self.cargo_volume * 0.2
-            && state.available_isk > profit_goal
-            && state.get_jumps() < (self.max_jumps as f32 * 0.2) as u32 // TODO: Add these thresholds to settings? These values are arbitrary
+        if state.path.current_system() == state.path.destination() {
+            return false;
+        }
+
+        state.get_profit() > profit_goal && state.get_jumps() < (self.max_jumps as f32 * 0.9) as u32
+        // TODO: Add these thresholds to settings? These values are arbitrary
     }
 
     fn should_accept_pair(
@@ -232,14 +235,6 @@ impl<'a> OrderProcessor<'a> {
         state: &TradeState,
         pathfinder: &mut Pathfinder,
     ) -> bool {
-        if pair.investment > state.available_isk {
-            return false;
-        }
-
-        if pair.cargo_volume > state.available_volume {
-            return false;
-        }
-
         let jumps_to_sell_order = pathfinder
             .compute_path(state.path.current_system(), pair.sell_order_system.id)
             .unwrap()
@@ -285,6 +280,11 @@ impl<'a> OrderProcessor<'a> {
                     let cargo_volume = self.types.get(&type_id).unwrap().volume * units as f32;
                     let investment = sell_order.price * units as f32;
 
+                    if profit < 5_000_000.0 {
+                        // TODO: Add this threshold to settings
+                        continue;
+                    }
+
                     buy_order.volume = units;
                     sell_order.volume = units;
 
@@ -294,7 +294,6 @@ impl<'a> OrderProcessor<'a> {
                         buy_order_system,
                         sell_order_system,
                         cargo_volume,
-                        units,
                         profit,
                         investment,
                     });
@@ -343,8 +342,8 @@ impl<'a> OrderProcessor<'a> {
             // Ask user on startup for origin system_id and then rate initial pair candidates by profit/distance to origin system?
 
             initial_state = Some(TradeState {
-                available_isk: self.initial_capital - pair.investment,
-                available_volume: self.cargo_volume - pair.cargo_volume,
+                initial_capital: self.initial_capital,
+                initial_volume: self.cargo_volume,
                 visited_systems: std::collections::HashSet::new(),
                 path: TradePath::new(),
             });
@@ -368,6 +367,25 @@ impl<'a> OrderProcessor<'a> {
         }
 
         initial_state.unwrap()
+    }
+
+    fn fit_pair(&self, pair: &mut TradePair, state: &TradeState) {
+        if pair.investment > state.get_available_isk()
+            || pair.cargo_volume > state.get_available_volume()
+        {
+            let units = self.calculate_max_units(
+                pair.buy_order.type_id,
+                &pair.buy_order,
+                &pair.sell_order,
+                &Some(state),
+            );
+
+            pair.buy_order.volume = units;
+            pair.sell_order.volume = units;
+            pair.cargo_volume =
+                self.types.get(&pair.buy_order.type_id).unwrap().volume * units as f32;
+            pair.investment = pair.sell_order.price * units as f32;
+        }
     }
 
     fn preprocess_pairs(&self, pairs: &mut Vec<TradePair>, initial_state: &TradeState) {
@@ -397,6 +415,8 @@ impl<'a> OrderProcessor<'a> {
             similarity >= 0.9
         });
         info!("Number of pairs left: {}.", pairs.len());
+
+        assert_ne!(pairs.len(), 0); // TODO: Proper error handling here.
     }
 
     fn construct_states(
@@ -406,9 +426,6 @@ impl<'a> OrderProcessor<'a> {
         pathfinder: &mut Pathfinder,
     ) -> Vec<TradeState> {
         let mut new_states: Vec<TradeState> = Vec::new();
-
-        new_states.push(state.clone());
-
         let mut new_state = state.clone();
 
         new_state.path.insert_order(
@@ -417,9 +434,11 @@ impl<'a> OrderProcessor<'a> {
             pathfinder,
         );
 
+        new_state.path.next_system_id();
+
         new_state.path.insert_order(
             pair.buy_order.clone(),
-            new_state.path.current_point_index() + 2,
+            new_state.path.current_point_index() + 1,
             pathfinder,
         );
 
@@ -450,27 +469,23 @@ impl<'a> OrderProcessor<'a> {
         info!("Starting processing routes...");
 
         let mut routes: Vec<Route> = Vec::new();
+        let mut output_states: Vec<TradeState> = Vec::new();
+        let mut pathfinder = Pathfinder::new(self.systems);
+
         let mut pairs = self.construct_pairs();
 
-        let mut pathfinder = Pathfinder::new(self.systems);
         let initial_state: TradeState = self.find_initial_state(&mut pairs, &mut pathfinder);
         self.preprocess_pairs(&mut pairs, &initial_state);
 
         let mut states: BinaryHeap<TradeState> = BinaryHeap::new();
         states.push(initial_state);
 
-        let mut system_pairs: HashMap<u32, Vec<&TradePair>> = HashMap::new();
+        let mut system_pairs: HashMap<u32, Vec<&mut TradePair>> = HashMap::new();
         let mut nodes_set: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut nodes: Vec<Node3D> = Vec::new();
-        for pair in &pairs {
+        for pair in &mut pairs {
             // Here we precompute the paths for all pairs and cache them in the pathfinder.
             let _ = pathfinder.compute_path(pair.sell_order_system.id, pair.buy_order_system.id);
-
-            // We also cache the pairs for each system.
-            system_pairs
-                .entry(pair.sell_order_system.id)
-                .or_default()
-                .push(pair);
 
             // And collect the nodes for the K-D tree.
             if nodes_set.get(&pair.sell_order_system.id).is_none() {
@@ -481,77 +496,49 @@ impl<'a> OrderProcessor<'a> {
 
                 nodes_set.insert(pair.sell_order_system.id);
             }
+
+            // We also cache the pairs for each system.
+            system_pairs
+                .entry(pair.sell_order_system.id)
+                .or_default()
+                .push(pair);
         }
 
         let root = Node3D::construct_tree(&mut nodes, 0).unwrap();
         info!("3-D k-d tree is constructed.");
 
-        /*
-            итерируюясь по соседям, смотрим ближайшие точки с трейдами. в зависимости от типа купленного продукта,
-            итерируемся по вектору с ордерами на покупку, ищем ближайшую точку. нашли - добавляем в путь. повторяем процесс пока continue_search.
-            запоминаем оба стейта и итерируемся по обоим.
-        */
-
-        /*
-            нужно каким то образом создать вектор стейтов со всеми возможными пермутациями пар. как?
-
-            какой вариант лучше, оптимизировать пути или постепенно их улучшать?
-
-            лучше работать с парами и максимально загружать карго. таким образом, мы будем сто процентно вынуждены лететь после этого в точку продажи.
-            если будем полу пустые, то придётся искать очень сложные пермутации путей (A1-A2-B1-B2, вместо A1-B1-B2-A2)
-            // TODO: добавить фильтровку пар по загруженности карго?
-
-            нет, полный бред. забиваться полностью нет смысла. модули могут весить очень мало, но могут приносить очень много профита. надо подумать над другим вариантом.
-
-            если работать с парами:
-                берём стейт, смотрим ближайшие к current_system пары. добавляем их, модифицируя путь (от точки, где продали, до конечной точки). добавляем системы этих пар в visited_systems.
-                инкрементируем current_system в зависимости от пути.
-                сохраняем все эти стейты, в том числе и неизменённые.
-        */
-        let mut output_states: Vec<TradeState> = Vec::new();
+        info!("Searching for routes...");
         while let Some(mut state) = states.pop() {
             if !self.continue_search(&state) {
                 output_states.push(state);
-                break; // todo: remove break
+                break;
             }
-
-            debug!("asd");
 
             let current_system = self.systems.get(&state.path.current_system()).unwrap();
 
-            let mut depth = 0;
-            while let Some(nearest_node) = Node3D::nearest_neighbor(
+            if let Some(nearest_node) = Node3D::nearest_neighbor(
+                // TODO: here we only check one nearest node.
                 &Some(root.clone()),
                 &current_system.position,
                 &state.visited_systems,
             ) {
-                if depth >= 1 {
-                    break;
-                }
-
                 let nearest_system_id = nearest_node.system_id;
                 state.visited_systems.insert(nearest_system_id);
-                let pairs = match system_pairs.get(&nearest_system_id) {
-                    Some(closest_pairs) => closest_pairs,
-                    None => {
-                        continue;
-                    }
-                };
 
-                for pair in pairs {
-                    if self.should_accept_pair(pair, &state, &mut pathfinder) {
-                        states.extend(self.construct_states(&state, &pair, &mut pathfinder));
+                if let Some(closest_pairs) = system_pairs.get_mut(&nearest_system_id) {
+                    for pair in closest_pairs.iter_mut() {
+                        self.fit_pair(pair, &state);
+
+                        if self.should_accept_pair(pair, &state, &mut pathfinder) {
+                            states.extend(self.construct_states(&state, &pair, &mut pathfinder));
+                        }
                     }
                 }
-
-                depth += 1;
             }
 
             state.path.next_system_id();
             states.push(state);
         }
-
-        debug!("Output states: {:?}", output_states);
 
         for state in output_states {
             routes.push(state.to_route(&mut pathfinder));

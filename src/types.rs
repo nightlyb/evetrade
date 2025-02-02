@@ -1,6 +1,5 @@
 use crate::pathfinder::Pathfinder;
 use crate::route::Route;
-use serde;
 use std::cmp::Ordering;
 use std::ops::{Add, Mul, Sub};
 

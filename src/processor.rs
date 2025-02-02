@@ -373,7 +373,7 @@ impl<'a> OrderProcessor<'a> {
             if let Some(state) = &mut initial_state {
                 let mut pair = pairs.remove(i);
 
-                self.fit_pair(&mut pair, &state);
+                self.fit_pair(&mut pair, state);
 
                 state
                     .path
@@ -581,11 +581,7 @@ impl<'a> OrderProcessor<'a> {
                             self.fit_pair(pair, &state);
 
                             if self.should_accept_pair(pair, &state, &mut pathfinder) {
-                                states.extend(self.construct_states(
-                                    &state,
-                                    &pair,
-                                    &mut pathfinder,
-                                ));
+                                states.extend(self.construct_states(&state, pair, &mut pathfinder));
                             }
                         }
                     }

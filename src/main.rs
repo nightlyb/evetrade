@@ -16,7 +16,8 @@ use log::{error, info};
 use evetrade::Evetrade;
 
 fn main() {
-    println!("initializing logger...");
+    #[cfg(feature = "dhat-ad-hoc")]
+    let _profiler = dhat::Profiler::new_ad_hoc();
 
     let mut et = Evetrade::new();
 

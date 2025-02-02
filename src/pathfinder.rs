@@ -2,7 +2,6 @@ use log::error;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use crate::kdtree::Node3D;
 use crate::types::System;
 
 // TODO. Modify pathfinder, add different heuristics. Security, profit/volume, distance, etc.
@@ -25,14 +24,19 @@ impl<'a> Pathfinder<'a> {
         if let (Some(current_system), Some(end_system)) =
             (self.systems.get(&origin), self.systems.get(&destination))
         {
-            current_system.position.distance(&end_system.position)
+            current_system
+                .position
+                .distance_squared(&end_system.position)
+
+            // TODO: Should we use distance() instead? Does it affect the result?
+            // TODO: Modify the heuristic to include security
         } else {
             error!("Invalid system ID");
             f64::INFINITY
         }
     }
 
-    fn a_star(&self, origin: u32, destination: u32, security_threshold: f32) -> Option<Vec<u32>> {
+    fn a_star(&self, origin: u32, destination: u32, _security_threshold: f32) -> Option<Vec<u32>> {
         if !self.systems.contains_key(&origin) || !self.systems.contains_key(&destination) {
             return None;
         }

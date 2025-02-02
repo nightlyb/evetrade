@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Mutex};
+use std::sync::Mutex;
 
 use crate::evetrade::EvetradeError;
 
@@ -10,6 +10,10 @@ pub struct Settings {
     max_jumps: u32,
     initial_capital: f32,
     security_threshold: f32,
+    pair_profit_threshold: f32,
+    profit_goal: f32,
+    jump_window: f32,
+    similarity_threshold: f32,
 }
 
 impl Settings {
@@ -22,6 +26,10 @@ impl Settings {
             max_jumps: 0,
             initial_capital: 0.0,
             security_threshold: 0.0,
+            pair_profit_threshold: 0.0,
+            profit_goal: 0.0,
+            jump_window: 0.0,
+            similarity_threshold: 0.0,
         }
     }
 
@@ -48,6 +56,16 @@ impl Settings {
 
         if config.get("user").is_none() {
             println!("Settings::parse_config() : no 'user' section in the config.");
+            return Err(EvetradeError::ConfigError);
+        }
+
+        if config.get("route").is_none() {
+            println!("Settings::parse_config() : no 'route' section in the config.");
+            return Err(EvetradeError::ConfigError);
+        }
+
+        if config.get("advanced").is_none() {
+            println!("Settings::parse_config() : no 'advanced' section in the config.");
             return Err(EvetradeError::ConfigError);
         }
 
@@ -83,6 +101,11 @@ impl Settings {
                 EvetradeError::ConfigError
             })?;
 
+        if percentage_treshold <= 0.0 {
+            println!("Settings::parse_config() : invalid threshold value.");
+            return Err(EvetradeError::ConfigError);
+        }
+
         let ship_cargo_volume =
             config["user"]["ship_cargo_volume"]
                 .as_float()
@@ -93,12 +116,10 @@ impl Settings {
                     EvetradeError::ConfigError
                 })?;
 
-        let max_jumps = config["thresholds"]["max_jumps"]
-            .as_integer()
-            .ok_or_else(|| {
-                println!("Settings::parse_config() : failed to parse 'thresholds->max_jumps'.");
-                EvetradeError::ConfigError
-            })?;
+        let max_jumps = config["route"]["max_jumps"].as_integer().ok_or_else(|| {
+            println!("Settings::parse_config() : failed to parse 'route->max_jumps'.");
+            EvetradeError::ConfigError
+        })?;
 
         let initial_capital = config["user"]["initial_capital"]
             .as_float()
@@ -107,24 +128,84 @@ impl Settings {
                 EvetradeError::ConfigError
             })?;
 
-        let security_threshold = config["thresholds"]["security_threshold"]
+        let security_threshold = config["route"]["security_threshold"]
+            .as_float()
+            .ok_or_else(|| {
+                println!("Settings::parse_config() : failed to parse 'route->security_threshold'.");
+                EvetradeError::ConfigError
+            })?;
+
+        let pair_profit_threshold = config["thresholds"]["pair_profit_threshold"]
             .as_float()
             .ok_or_else(|| {
                 println!(
-                    "Settings::parse_config() : failed to parse 'thresholds->security_threshold'."
+                    "Settings::parse_config() : failed to parse 'thresholds->pair_profit_threshold'."
                 );
                 EvetradeError::ConfigError
             })?;
 
-        Settings::set_update_universe_data(update_universe_data);
-        Settings::set_percentage_threshold(percentage_treshold as f32)?;
-        Settings::set_ship_cargo_volume(ship_cargo_volume as f32);
-        Settings::set_max_jumps(max_jumps as u32);
-        Settings::set_log_level(log_level);
-        Settings::set_initial_capital(initial_capital as f32);
-        Settings::set_security_threshold(security_threshold as f32);
+        let profit_goal = config["user"]["profit_goal"].as_float().ok_or_else(|| {
+            println!("Settings::parse_config() : failed to parse 'user->profit_goal'.");
+            EvetradeError::ConfigError
+        })?;
+
+        if profit_goal <= 0.0 {
+            println!("Settings::parse_config() : invalid profit goal value.");
+            return Err(EvetradeError::ConfigError);
+        }
+
+        let jump_window = config["advanced"]["jump_window"]
+            .as_float()
+            .ok_or_else(|| {
+                println!("Settings::parse_config() : failed to parse 'advanced->jump_window'.");
+                EvetradeError::ConfigError
+            })?;
+
+        if jump_window <= 0.0 {
+            println!("Settings::parse_config() : jump window is too low.");
+            return Err(EvetradeError::ConfigError);
+        }
+
+        let similarity_threshold = config["advanced"]["similarity_threshold"]
+            .as_float()
+            .ok_or_else(|| {
+                println!(
+                    "Settings::parse_config() : failed to parse 'advanced->similarity_threshold'."
+                );
+                EvetradeError::ConfigError
+            })?;
+
+        let mut settings = SETTINGS.lock().unwrap();
+
+        settings.log_level = log_level;
+        settings.update_universe_data = update_universe_data;
+        settings.percentage_threshold = percentage_treshold as f32;
+        settings.ship_cargo_volume = ship_cargo_volume as f32;
+        settings.max_jumps = max_jumps as u32;
+        settings.initial_capital = initial_capital as f32;
+        settings.security_threshold = security_threshold as f32;
+        settings.pair_profit_threshold = pair_profit_threshold as f32;
+        settings.profit_goal = profit_goal as f32;
+        settings.jump_window = jump_window as f32;
+        settings.similarity_threshold = similarity_threshold as f32;
 
         Ok(())
+    }
+
+    pub fn get_similarity_threshold() -> f32 {
+        SETTINGS.lock().unwrap().similarity_threshold
+    }
+
+    pub fn get_jump_window() -> f32 {
+        SETTINGS.lock().unwrap().jump_window
+    }
+
+    pub fn get_profit_goal() -> f32 {
+        SETTINGS.lock().unwrap().profit_goal
+    }
+
+    pub fn get_pair_profit_threshold() -> f32 {
+        SETTINGS.lock().unwrap().pair_profit_threshold
     }
 
     pub fn get_log_level() -> log::LevelFilter {
@@ -159,13 +240,8 @@ impl Settings {
         SETTINGS.lock().unwrap().update_universe_data = update;
     }
 
-    pub fn set_percentage_threshold(threshold: f32) -> Result<(), EvetradeError> {
-        if threshold <= 0.0 {
-            println!("Settings::set_percentage_threshold() : invalid threshold value.");
-            return Err(EvetradeError::ConfigError);
-        }
+    pub fn set_percentage_threshold(threshold: f32) {
         SETTINGS.lock().unwrap().percentage_threshold = threshold;
-        Ok(())
     }
 
     pub fn set_max_jumps(jumps: u32) {
@@ -182,6 +258,18 @@ impl Settings {
 
     pub fn set_security_threshold(threshold: f32) {
         SETTINGS.lock().unwrap().security_threshold = threshold;
+    }
+
+    pub fn set_pair_profit_threshold(threshold: f32) {
+        SETTINGS.lock().unwrap().pair_profit_threshold = threshold;
+    }
+
+    pub fn set_profit_goal(goal: f32) {
+        SETTINGS.lock().unwrap().profit_goal = goal;
+    }
+
+    pub fn set_jump_window(window: f32) {
+        SETTINGS.lock().unwrap().jump_window = window;
     }
 }
 

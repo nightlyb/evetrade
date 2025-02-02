@@ -1,5 +1,7 @@
 ideas:
 
+do we need order id at all in order struct?
+debug memory allocations
 
 TODO:
 

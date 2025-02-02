@@ -1,6 +1,6 @@
 use chrono::Local;
 use env_logger::Builder;
-use log::{error, info, Level, LevelFilter};
+use log::{debug, error, info, Level};
 use std::io::Write;
 
 use crate::esi;
@@ -13,6 +13,7 @@ pub enum EvetradeError {
     ESIError,
     IOError,
     ConfigError,
+    ComputeError,
 }
 
 pub struct Evetrade {
@@ -31,11 +32,14 @@ impl Evetrade {
     }
 
     pub fn init(&mut self) -> Result<(), EvetradeError> {
-        println!("initializing logger...");
+        println!("parsing config file...");
+
         Settings::parse_config().map_err(|err| {
             println!("Evetrade::init() : error in the config: {}", err);
             EvetradeError::ConfigError
         })?;
+
+        println!("initializing logger...");
 
         Builder::new()
             .format(|buf, record| {
@@ -88,7 +92,7 @@ impl Evetrade {
         info!("Logger initialized successfully!");
 
         if self.esi.get_all_data().is_err() {
-            error!("Failed to fetch all required data! Shutting down...");
+            error!("Failed to fetch all required data! Delete the cache and try again.");
             return Err(EvetradeError::ESIError);
         }
 
@@ -97,6 +101,9 @@ impl Evetrade {
     }
 
     pub fn compute(&mut self) -> Result<(), EvetradeError> {
+        debug!("Ship cargo volume: {}", Settings::get_ship_cargo_volume());
+        debug!("Initial capital: {}", Settings::get_initial_capital());
+
         info!("Computing routes...");
         let mut processor = OrderProcessor::new(
             &mut self.esi.orders,
@@ -105,7 +112,7 @@ impl Evetrade {
             //self.esi.mean_jump_distance,
         );
 
-        self.routes = processor.compute();
+        self.routes = processor.compute()?;
 
         info!("Sorting routes...");
         Route::sort_routes(&mut self.routes);
@@ -144,6 +151,7 @@ impl std::fmt::Display for EvetradeError {
             EvetradeError::ESIError => write!(f, "Failed to perform API requests!"),
             EvetradeError::IOError => write!(f, "Failed to save routes!"),
             EvetradeError::ConfigError => write!(f, "Failed to load the configuration file!"),
+            EvetradeError::ComputeError => write!(f, "Failed to compute routes!"),
         }
     }
 }

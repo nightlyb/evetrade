@@ -3,6 +3,11 @@ name = "evetrade"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+debug = true
+#lto = true
+#codegen-units = 1
+
 [dependencies]
 log = "0.4"
 env_logger = "0.10.2"
@@ -20,3 +25,4 @@ bzip2 = "0.5.0"
 rand = "0.8.5"
 num-traits = "0.2.19"
 toml = "0.8.19"
+dhat = "0.3.3"

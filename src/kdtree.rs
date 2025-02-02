@@ -20,29 +20,32 @@ impl<'a> Node3D<'a> {
         }
     }
 
-    pub fn construct_tree(nodes: &mut Vec<Node3D<'a>>, depth: usize) -> Option<Box<Node3D<'a>>> {
+    pub fn construct_tree(nodes: &mut [Node3D<'a>], depth: usize) -> Option<Box<Node3D<'a>>> {
         if nodes.is_empty() {
             return None;
         }
 
-        //let axis = depth % 3;
+        // Determine the axis with the largest spread.
+        let axis = {
+            let (lowest_point, highest_point) = nodes.iter().fold(
+                (
+                    Vector3::new(f64::MAX, f64::MAX, f64::MAX),
+                    Vector3::new(f64::MIN, f64::MIN, f64::MIN),
+                ),
+                |(mut low, mut high), node| {
+                    low.x = low.x.min(node.position.x);
+                    low.y = low.y.min(node.position.y);
+                    low.z = low.z.min(node.position.z);
+                    high.x = high.x.max(node.position.x);
+                    high.y = high.y.max(node.position.y);
+                    high.z = high.z.max(node.position.z);
+                    (low, high)
+                },
+            );
+            (highest_point - lowest_point).max_dimension()
+        };
 
-        let mut lowest_point = Vector3::new(f64::MAX, f64::MAX, f64::MAX);
-        let mut highest_point = Vector3::new(f64::MIN, f64::MIN, f64::MIN);
-
-        // TODO: Search for a better approach? How do we construct the tree with the highest quality possible?
-        nodes.iter().for_each(|node| {
-            lowest_point.x = lowest_point.x.min(node.position.x);
-            lowest_point.y = lowest_point.y.min(node.position.y);
-            lowest_point.z = lowest_point.z.min(node.position.z);
-
-            highest_point.x = highest_point.x.max(node.position.x);
-            highest_point.y = highest_point.y.max(node.position.y);
-            highest_point.z = highest_point.z.max(node.position.z);
-        });
-
-        let axis = (highest_point - lowest_point).max_dimension();
-
+        // Sort nodes along the chosen axis.
         nodes.sort_by(|a, b| match axis {
             0 => a
                 .position
@@ -61,76 +64,73 @@ impl<'a> Node3D<'a> {
                 .unwrap_or(std::cmp::Ordering::Equal),
         });
 
+        // Find the median index.
         let mid = nodes.len() / 2;
 
-        let mut root = nodes.remove(mid);
+        // Split the nodes into left and right subtrees.
+        let mut root = nodes[mid].clone();
+        let (left, right) = nodes.split_at_mut(mid);
+        let right = &mut right[1..]; // Exclude the median node.
 
-        root.left = Node3D::construct_tree(&mut nodes[..mid].to_vec(), depth + 1);
-        root.right = Node3D::construct_tree(&mut nodes[mid..].to_vec(), depth + 1);
+        // Recursively construct the left and right subtrees.
+        root.left = Node3D::construct_tree(left, depth + 1);
+        root.right = Node3D::construct_tree(right, depth + 1);
 
         Some(Box::new(root))
     }
 
     pub fn nearest_neighbor(
-        root: &Option<Box<Node3D<'a>>>,
+        &self,
         target: &Vector3,
         exclude_nodes: &std::collections::HashSet<u32>,
     ) -> Option<Node3D<'a>> {
-        if root.is_none() {
-            return None;
-        }
+        let mut best_distance_sq = f64::INFINITY;
+        let mut best_node: Option<&Node3D<'a>> = None;
+        let mut stack: Vec<(&Node3D<'a>, usize)> = Vec::new();
 
-        let mut best_distance: f64 = 0.0;
-        let mut best_node: Option<Node3D<'a>> = None;
-        let mut stack: Vec<(&Box<Node3D>, usize)> = Vec::new();
-
-        // Start by pushing the root node onto the stack.
-        if let Some(node) = root {
-            stack.push((node, 0));
-        }
+        stack.push((self, 0));
 
         while let Some((current_node, depth)) = stack.pop() {
-            let axis = depth % 3;
-
             if exclude_nodes.contains(&current_node.system_id) {
                 continue;
             }
 
-            // Compute the distance to the target point.
-            let dist = target.distance_squared(current_node.position);
+            let dist_sq = target.distance_squared(current_node.position);
 
-            // Update the best point if necessary.
-            if best_distance == 0.0 || dist < best_distance {
-                best_distance = dist;
-                best_node = Some(*current_node.clone());
+            // Update the best node if this node is closer.
+            if dist_sq < best_distance_sq {
+                best_distance_sq = dist_sq;
+                best_node = Some(current_node);
             }
 
-            // Determine which branch to search first based on the target point.
+            let axis = depth % 3;
             let diff = match axis {
                 0 => target.x - current_node.position.x,
                 1 => target.y - current_node.position.y,
                 _ => target.z - current_node.position.z,
             };
 
-            let (first, second) = if diff < 0.0 {
+            // Determine the order of traversal based on the splitting plane.
+            let (near, far) = if diff < 0.0 {
                 (&current_node.left, &current_node.right)
             } else {
                 (&current_node.right, &current_node.left)
             };
 
-            // Push the first branch to search.
-            if let Some(first_child) = first {
-                stack.push((first_child, depth + 1));
+            // Push the near branch first.
+            if let Some(near_child) = near {
+                stack.push((near_child, depth + 1));
             }
 
-            // Push the second branch if it might contain a closer point.
-            if diff.powi(2) < best_distance {
-                if let Some(second_child) = second {
-                    stack.push((second_child, depth + 1));
+            // Push the far branch only if it might contain a closer point.
+            if diff.powi(2) < best_distance_sq {
+                if let Some(far_child) = far {
+                    stack.push((far_child, depth + 1));
                 }
             }
         }
 
-        best_node
+        // Clone the best node only at the end, if necessary.
+        best_node.cloned()
     }
 }

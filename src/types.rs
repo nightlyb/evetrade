@@ -1,6 +1,5 @@
 use crate::pathfinder::Pathfinder;
 use crate::route::Route;
-use log::debug;
 use serde;
 use std::cmp::Ordering;
 use std::ops::{Add, Mul, Sub};
@@ -56,10 +55,6 @@ pub struct OrderGroup {
 }
 
 impl OrderGroup {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     pub fn add_order(&mut self, order: Order) {
         if order.is_buy_order {
             self.buy.push(order);
@@ -353,6 +348,7 @@ impl TradePath {
     }
 }
 
+#[derive(Clone)]
 pub struct TradePair<'a> {
     pub buy_order: Order,
     pub sell_order: Order,
@@ -365,6 +361,42 @@ pub struct TradePair<'a> {
     pub investment: f32,
 }
 
+#[derive(PartialEq, Eq, Hash)]
+pub struct PairIdentifier {
+    buy_order_system_id: u32,
+    sell_order_system_id: u32,
+    type_id: u32,
+}
+
+impl PairIdentifier {
+    pub fn new(buy_order: &Order, sell_order: &Order) -> Self {
+        PairIdentifier {
+            buy_order_system_id: buy_order.system_id,
+            sell_order_system_id: sell_order.system_id,
+            type_id: buy_order.type_id,
+        }
+    }
+}
+
+// Is it better than having another field for order_id?
+// impl<'a> std::hash::Hash for TradePair<'a> {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.sell_order.order_id.hash(state);
+//         self.buy_order.order_id.hash(state);
+//         self.buy_order.volume.hash(state);
+//     }
+// }
+
+// impl<'a> PartialEq for TradePair<'a> {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.sell_order.order_id == other.sell_order.order_id
+//             && self.buy_order.order_id == other.buy_order.order_id
+//             && self.buy_order.volume == other.buy_order.volume
+//     }
+// }
+
+// impl<'a> Eq for TradePair<'a> {}
+
 #[derive(Debug, Clone)]
 pub struct TradeState {
     pub path: TradePath,
@@ -376,6 +408,10 @@ pub struct TradeState {
 impl TradeState {
     pub fn get_occupied_volume(&self) -> f32 {
         let mut occupied_volume = 0.0;
+
+        if self.path.len() == 0 {
+            return occupied_volume;
+        }
 
         for point in &self.path.points[0..self.path.current_point_index() + 1] {
             if let Some(order) = &point.order {

@@ -174,6 +174,8 @@ impl Route {
 
         writeln!(representation, "----------------------------------------\n").unwrap();
 
+        let mut deviations: u16 = 0;
+
         for point in &self.path {
             match point {
                 Waypoint::System(system) => {
@@ -189,19 +191,38 @@ impl Route {
                 Waypoint::Order(order) => {
                     jumps = 0;
                     let order_type = if order.is_buy_order { "Buy" } else { "Sell" };
+
+                    let profit_str = if order.is_buy_order {
+                        "+".to_string()
+                            + Route::format_number(order.price * order.volume as f32).as_str()
+                    } else {
+                        "-".to_string()
+                            + Route::format_number(order.price * order.volume as f32).as_str()
+                    };
+
+                    if !order.is_buy_order {
+                        deviations += 1;
+                    }
+
                     writeln!(
                         representation,
                         "\n\n\t{} order for {} of {} ({} ISK; {} units; {}% cargo).",
                         order_type,
                         order.volume,
                         order.order_type.name,
-                        Route::format_number(order.volume as f32 * order.price),
+                        profit_str,
                         order.volume,
-                        ((Settings::get_ship_cargo_volume() / order.volume as f32) * 100.0 * 10.0)
-                            .round()
-                            / 10.0
+                        ((order.cargo_volume / Settings::get_ship_cargo_volume()) * 100.0).round()
                     )
                     .unwrap();
+
+                    writeln!(
+                        representation,
+                        "volume: {} units {}",
+                        order.cargo_volume, order.volume
+                    )
+                    .unwrap();
+
                     writeln!(
                         representation,
                         "\tEve Market Browser: {}\n\n",
@@ -225,6 +246,7 @@ impl Route {
             Route::format_number(self.get_profit())
         )
         .unwrap();
+
         writeln!(
             representation,
             "Profit per jump: {}\n",
@@ -232,8 +254,8 @@ impl Route {
         )
         .unwrap();
 
+        writeln!(representation, "Deviations: {}", deviations).unwrap();
         writeln!(representation, "----------------------------------------\n").unwrap();
-
         writeln!(representation, "\n\n\n").unwrap();
 
         self.representation = representation.clone();

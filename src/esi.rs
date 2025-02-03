@@ -112,6 +112,11 @@ impl ESI {
     // }
 
     fn fetch_universe_data(&mut self) -> Result<(), ESIError> {
+        if Settings::get_manual_download() {
+            info!("Using manually downloaded universe data.");
+            return Ok(());
+        }
+
         info!("Updating universe data...");
 
         let response = reqwest::blocking::get(urls::get_esi_scrape_url()).map_err(|err| {
@@ -302,19 +307,42 @@ impl ESI {
     }
 
     fn fetch_orders(&mut self) -> Result<(), ESIError> {
-        let response = reqwest::blocking::get(urls::get_market_data_url()).map_err(|err| {
-            error!("Failed to perform an API call! \n\tError: {}", err);
-            ESIError::RequestError
-        })?;
-
-        let mut decompressor = BzDecoder::new(response);
         let mut data_buffer = Vec::new();
 
-        info!("Decompressing orders...");
-        decompressor.read_to_end(&mut data_buffer).map_err(|err| {
-            error!("Failed to read decompressed data! \n\tError: {}", err);
-            ESIError::InvalidData
-        })?;
+        if !Settings::get_manual_download() {
+            let response = reqwest::blocking::get(urls::get_market_data_url()).map_err(|err| {
+                error!("Failed to perform an API call! \n\tError: {}", err);
+                ESIError::RequestError
+            })?;
+    
+            let mut decompressor = BzDecoder::new(response);
+    
+            info!("Decompressing orders...");
+            decompressor.read_to_end(&mut data_buffer).map_err(|err| {
+                error!("Failed to read decompressed data! \n\tError: {}", err);
+                ESIError::InvalidData
+            })?;
+        }
+        else {
+            // TODO: Replace all the strings with constants
+            let mut orders_csv = std::fs::File::open("./evecache/market-orders-latest.v3.csv");
+            if let Some(orders_csv) = orders_csv {
+                //let metadata = std::fs::metadata("./evecache/market-orders-latest.v3.csv");
+                // if let Some(metadata) = metadata {
+                //     orders_csv.read(&mut data_buffer);
+                // }
+                // else {
+                //     error!("User-downloaded data is invalid."); // TODO: Change the error message
+                //     return Err(ESIError::InvalidData);
+                // }
+
+                orders_csv.read(&mut data_buffer);
+            }
+            else {
+                error!("User-downloaded data does not exist."); // TODO: Change the error message
+                return Err(ESIError::InvalidData);
+            }
+        }
 
         let csv_data = std::io::Cursor::new(data_buffer);
         let mut reader = csv::Reader::from_reader(csv_data);

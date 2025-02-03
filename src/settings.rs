@@ -14,6 +14,7 @@ pub struct Settings {
     profit_goal: f32,
     jump_window: f32,
     similarity_threshold: f32,
+    manual_download: bool,
 }
 
 impl Settings {
@@ -30,6 +31,7 @@ impl Settings {
             profit_goal: 0.0,
             jump_window: 0.0,
             similarity_threshold: 0.0,
+            manual_download = false,
         }
     }
 
@@ -175,6 +177,15 @@ impl Settings {
                 EvetradeError::ConfigError
             })?;
 
+        let manual_download = config["advanced"]["manual_download"]
+        .as_bool()
+        .ok_or_else(|| {
+            println!(
+                "Settings::parse_config() : failed to parse 'advanced->manual_download'."
+            );
+            EvetradeError::ConfigError
+        })?;
+
         let mut settings = SETTINGS.lock().unwrap();
 
         settings.log_level = log_level;
@@ -188,12 +199,17 @@ impl Settings {
         settings.profit_goal = profit_goal as f32;
         settings.jump_window = jump_window as f32;
         settings.similarity_threshold = similarity_threshold as f32;
+        settings.manual_download = manual_download;
 
         Ok(())
     }
 
     pub fn get_similarity_threshold() -> f32 {
         SETTINGS.lock().unwrap().similarity_threshold
+    }
+
+    pub fn get_manual_download() -> f32 {
+        SETTINGS.lock().unwrap().manual_download
     }
 
     pub fn get_jump_window() -> f32 {

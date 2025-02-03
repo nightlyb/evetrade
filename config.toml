@@ -19,3 +19,4 @@ security_threshold = -1.0 # Security threshold for the route
 [advanced]
 jump_window = 0.7          # Higher values mean less jumps are left for potential trade deviations along the way, and vice versa
 similarity_threshold = 0.2 # Threshold for vector similarity between two orders
+manual_download = false # Download universe and order data manually
